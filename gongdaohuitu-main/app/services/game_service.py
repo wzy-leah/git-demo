@@ -40,28 +40,55 @@ def generate_tasks(request: GenerateTasksRequest) -> dict:
         ]
     }
 
+from app.schemas.interact import GenerateTasksRequest, GameStepRequest, AnalyzeStoryRequest
+# 引入我们刚才改好的两个文件
+from app.clients.qwen_text_client import qwen_text_client
+from app.services.project_service import get_chat_history, append_chat_message
+
+# ... (generate_tasks 函数保持不变) ...
+
 def game_step(request: GameStepRequest) -> dict:
     """
-    Process game round and generate result.
-    Called by: /api/v1/interact/game-step endpoint
-    Handles: Mode 2 Step 5
-
-    Input:
-        - request: GameStepRequest with round index and player action
-
-    Output:
-        - Result dict with game round result
+    处理游戏回合：用户输入 -> 读取历史 -> AI生成 -> 保存历史 -> 返回前端
     """
-    # Mock result - assume task status progress
-    task_status = {"task_1": request.round_index >= 3, "task_2": request.round_index >= 6, "task_3": request.round_index >= 10}
+    session_id = request.session_id
+    player_action = request.player_action
+    
+    print(f"收到用户输入 (Round {request.round_index}): {player_action}")
+
+    # 1. 把用户的这句话存进记忆
+    append_chat_message(session_id, "user", player_action)
+
+    # 2. 读取完整的历史记忆 (包含之前所有的对话)
+    history = get_chat_history(session_id)
+    
+    # 可以在这里加一个系统提示词 (System Prompt) 设定 AI 的人设
+    system_prompt = {"role": "system", "content": "你是一个RPG游戏的主持人。请根据玩家的行动简短地描述结果，并推动剧情发展。"}
+    full_messages = [system_prompt] + history
+
+    # 3. 把整个历史发给 AI，获取回复
+    ai_response = qwen_text_client.generate_response(full_messages)
+    
+    # 4. 把 AI 的回复也存进记忆
+    append_chat_message(session_id, "assistant", ai_response)
+
+    # 5. 返回给前端
+    # Mock task_status (如果你暂时还没做任务逻辑，这里可以先Mock)
+    task_status = {
+        "task_1": request.round_index >= 3, 
+        "task_2": request.round_index >= 6, 
+        "task_3": request.round_index >= 10
+    }
 
     return {
-        "session_id": request.session_id,
-        "system_reaction_text": f"Round {request.round_index}: You decided to {request.player_action}. After a brave effort, you made progress. The path ahead looks challenging but rewarding!",
-        "image_url": f"https://example.com/mock-game-image-{request.round_index}.jpg",
+        "session_id": session_id,
+        "system_reaction_text": ai_response,  # 这里现在是真正的 AI 回复了！
+        "image_url": f"https://example.com/mock-game-image-{request.round_index}.jpg", # 图片暂时还用Mock URL，下一步再修图片
         "task_status": task_status,
         "current_round": request.round_index
     }
+
+# ... (analyze_story 函数保持不变) ...
 
 def analyze_story(request: AnalyzeStoryRequest) -> dict:
     """
