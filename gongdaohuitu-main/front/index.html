@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        /* css页面整体样式 */
+        body{
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            height:100vh;
+            background-color: #a0d8ff;
+            font-family:Arial, sans-serif;
+
+        }
+        /* cssmainButton选择器样式 */
+        #mainButton{
+            padding:10px 20px;
+            font-size:20px;
+            cursor:pointer;
+        }
+        /* cssnewPage选择器样式（页面容器） */
+        #newPage{
+            display:none;
+            flex-direction:column;
+            align-items:center;
+            gap:20px;
+            /* 包裹一下新页面的两个按钮*/
+            background-color: white;
+            padding:20px;
+            border-radius:10px;
+            box-shadow:0 0 10px rgba(0,0,0,0.1)
+
+        }
+        /* canvas选择器样式 */
+        #canvas{
+            display:none;
+            border:1px solid #000;
+        }
+        /* 新增1：画笔控制容器样式*/
+        #drawControls{
+             display: none;
+            flex-direction: column;
+            gap: 10px;
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+            
+           
+        
+        /* 新增1:调色板样式 */
+        #colorPalette{
+            display:none;
+            padding:5px;
+            gap:5px;
+            border:1px solid #ccc;
+            border-radius:5px;
+            background:white;
+            position: absolute;
+            right: 70px;
+            top:50%;
+            transform:translateY(-50%);/*把调色板调到页面居中的位置*/ 
+            grid-template-columns: repeat(4,1fr);
+
+        }
+        /* 新增1：控制按钮样式 */
+        .control-btn{
+            width: 40px;
+            height: 40px;
+            border:none;
+            border-radius: 5px;
+            cursor:pointer;
+            font-size:14px;
+
+        }
+        /* 新增1：调色板里面的小颜色方块样式 */
+        .color-item{
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            cursor:pointer;
+            border:1px solid #eee;
+        }
+        
+    </style>
+</head>
+<body>
+    <!-- 设置按钮和画布 -->
+    <div id="mainPage">
+        <button id="mainButton">请选择</button>
+    </div>
+     <div id="newPage">
+        <button id="uploadButton">请输入图片</button>
+        <button id="drawButton">请自己画画</button>
+         <canvas id="canvas" width="800" height="600"></canvas> 
+        <!-- canvas是空白画布 自己本身不能画图-->
+         <!-- 新增1：画笔控制按钮容器 -->
+          <div id="drawControls">
+            <button id="eraserBtn" class="control-btn">橡皮</button>
+            <button id="colorBtn" class="control-btn">颜色</button>
+          </div>
+          <!-- 新增1：调色板 -->
+           
+            <div id="colorPalette"></div>
+        
+         <script>
+            //dom获取
+            const mainButton=document.getElementById('mainButton');
+            const newPage=document.getElementById('newPage');
+            const uploadButton=document.getElementById('uploadButton');
+            const drawButton=document.getElementById('drawButton');
+            const canvas=document.getElementById('canvas');
+            const ctx=canvas.getContext('2d');//在canvas上申请画图工具 getContext('2d')相当于拿出画画工具
+                                              //然后用ctx保存我的画布和工具
+            //新增1：dom获取控制元素
+            const drawControls=document.getElementById('drawControls');
+            const eraserBtn=document.getElementById('eraserBtn');
+            const colorBtn=document.getElementById('colorBtn');
+            const colorPalette=document.getElementById('colorPalette');
+            //新增1：绘画状态
+            let isEraser=false;
+            let currentColor='black';
+            //新增1：十六种颜色数组
+             const colors = [
+                '#000000', '#FFFFFF', '#FF0000', '#00FF00',
+                '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
+                '#FFA500', '#8B4513', '#FFC0CB', '#90EE90',
+                '#1E90FF', '#FFD700', '#DDA0DD', '#F08080'
+            ];
+            //新增1：初始化调色板,把颜色数组转化为可点击的小按钮
+            colors.forEach(color=>{
+                const colorItem=document.createElement('div');
+                colorItem.className='color-item';
+                colorItem.style.backgroundColor=color;
+                colorItem.title=color;
+                colorItem.addEventListener('click',()=>{
+                    currentColor=color;
+                    if(!isEraser){
+                        ctx.strokeStyle=currentColor;
+                    }
+                })
+                colorPalette.appendChild(colorItem);
+            })
+            //新增1：颜色按钮点击事件
+            colorBtn.addEventListener('click',(e)=>{
+                e.stopPropagation();
+                colorPalette.style.display=colorPalette.style.display==='grid'?'none':'grid';
+
+            })
+            //新增1：橡皮按钮点击事件
+            eraserBtn.addEventListener('click',()=>{
+                isEraser=!isEraser;
+                eraserBtn.style.backgroundColor=isEraser?'#ff9999':'';
+                eraserBtn.style.color=isEraser?'white':'';
+                if(isEraser){//切换到橡皮模式
+                    ctx.globalCompositeOperation='destination-out';
+                    ctx.strokeStyle='rgba(0,0,0,1)';
+                }else{//切换到画笔模式
+                    ctx.globalCompositeOperation='source-over';
+                ctx.strokeStyle=currentColor;
+
+                }
+
+            })
+            //新增1：点击页面空白处隐藏调色板
+            document.addEventListener('click',(e)=>{
+            if(e.target!==colorBtn){
+              colorPalette.style.display='none';
+             }
+              });
+            //点击‘请选择’按钮之后，隐藏旧页面，弹出新页面 
+            mainButton.addEventListener('click',function(){
+                document.getElementById('mainPage').style.display='none';
+                newPage.style.display='flex';
+
+            })
+            //给‘请输入图片’按钮绑定点击事件，点击后会弹出文件选择框，选完图片后自动把图片显示到之前隐藏的画布上
+            uploadButton.addEventListener('click',function(){
+                const input=document.createElement('input');//造一个输入框
+                input.type='file';//把input框类型设置为file 文字输入框--->文件选择框
+                input.accept='image/*';
+                input.onchange=e=>{//change监听检测input变化
+                    const file=e.target.files[0];//通过target指针拿到图片
+                    const reader=new FileReader();//把图片转化为浏览器认识的格式
+                    reader.onload=function(event){//onload监听检测reader变化
+                        const img=new Image();//img()创立空白照片容器
+                        img.onload=function(){
+                            ctx.globalCompositeOperation='source-over';
+                            ctx.clearRect(0,0,canvas.width,canvas.height);
+                            ctx.drawImage(img,0,0,canvas.width,canvas.height);
+                        }
+                        img.src=event.target.result;//传递图片地址
+                    }
+                    reader.readAsDataURL(file);
+
+                }
+                input.click();
+            });
+            //给‘请自己画画’绑定事件，点击按钮后显示画布且实现鼠标按住拖动就能画画的效果
+            drawButton.addEventListener('click',function(){
+                canvas.style.display='block';//显示隐藏的画布
+                drawControls.style.display='flex';
+
+                ctx.clearRect(0,0,canvas.width,canvas.height);//用工具清空画布
+                let painting=false;//判断是否在画画
+                //初始化画笔设置
+                ctx.lineWidth=5;
+                ctx.lineCap='round';
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = currentColor;
+
+                function startPosition(e){
+                    painting=true;
+                    draw(e);
+                }
+                function endPosition(){
+                    painting=false;
+                    ctx.beginPath();//重置画笔路径，结束当前线条
+
+                }
+                function draw(e){
+                    if (!painting) return;
+
+                    ctx.lineTo(e.clientX-canvas.offsetLeft,e.clientY-canvas.offsetTop);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(e.clientX-canvas.offsetLeft,e.clientY-canvas.offsetTop)
+
+                }
+                canvas.addEventListener('mousemove',draw);
+                canvas.addEventListener('mousedown',startPosition);
+                canvas.addEventListener('mouseup',endPosition);
+                canvas.addEventListener('mouseout',endPosition);
+
+                
+
+
+            });
+         
+
+
+         </script>
+
+     </div>
+    
+</body>
+</html>
+           

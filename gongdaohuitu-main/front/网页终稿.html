@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 绘梦互动 - 前端客户端</title>
+    <style>
+        /* --- 质感设计系统 (Texture & Glassmorphism) --- */
+        :root {
+            --bg-deep: #050505;
+            --primary-accent: #b16cea;
+            --secondary-accent: #ff5e62;
+            --glass-bg: rgba(255, 255, 255, 0.08);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.1);
+            --text-main: #ffffff;
+            --text-dim: rgba(255, 255, 255, 0.6);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; outline: none; }
+
+        body {
+            font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-deep);
+            /* 添加噪点纹理，增加高级质感 */
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(177, 108, 234, 0.15), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(255, 94, 98, 0.15), transparent 25%);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        /* 噪点遮罩 */
+        body::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        /* 主卡片容器 */
+        .app-container {
+            width: 900px;
+            height: 650px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: var(--glass-border);
+            border-radius: 24px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 页面切换逻辑 */
+        .page {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.95);
+            transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .page.active {
+            opacity: 1;
+            pointer-events: all;
+            transform: scale(1);
+            z-index: 10;
+        }
+
+        h1, h2 {
+            font-weight: 300;
+            letter-spacing: 2px;
+            margin-bottom: 30px;
+            text-shadow: 0 0 20px rgba(255,255,255,0.2);
+        }
+
+        /* 按钮组件 */
+        .btn {
+            padding: 12px 36px;
+            font-size: 16px;
+            background: linear-gradient(135deg, var(--primary-accent), var(--secondary-accent));
+            border: none;
+            border-radius: 30px;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(177, 108, 234, 0.4);
+            margin: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(177, 108, 234, 0.6);
+        }
+
+        .btn:active { transform: scale(0.98); }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.3);
+            box-shadow: none;
+        }
+        .btn-outline:hover { background: rgba(255,255,255,0.1); border-color: white; }
+
+        /* 画板样式 */
+        .canvas-wrapper {
+            position: relative;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        canvas { background: #fff; display: block; cursor: crosshair; }
+        
+        .toolbar {
+            margin-top: 15px;
+            display: flex;
+            gap: 15px;
+            background: rgba(0,0,0,0.3);
+            padding: 10px 20px;
+            border-radius: 50px;
+            align-items: center;
+        }
+        
+        .color-dot {
+            width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
+            border: 2px solid transparent; transition: 0.2s;
+        }
+        .color-dot.active { transform: scale(1.3); border-color: #fff; }
+
+        /* 聊天界面 */
+        .chat-container {
+            width: 100%;
+            height: 400px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 16px;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .msg {
+            max-width: 75%;
+            padding: 12px 18px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.5;
+            position: relative;
+        }
+        .msg-ai {
+            align-self: flex-start;
+            background: rgba(255,255,255,0.1);
+            border-bottom-left-radius: 4px;
+            color: #eee;
+        }
+        .msg-user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, #b16cea 0%, #9a4dff 100%);
+            border-bottom-right-radius: 4px;
+            color: #fff;
+        }
+
+        .chat-input-box {
+            width: 100%;
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"] {
+            flex: 1;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 12px 20px;
+            border-radius: 30px;
+            color: white;
+            transition: 0.3s;
+        }
+        input[type="text"]:focus { background: rgba(255,255,255,0.1); border-color: var(--primary-accent); }
+
+        /* 视频容器 */
+        .video-box {
+            width: 100%;
+            max-width: 700px;
+            aspect-ratio: 16/9;
+            background: #000;
+            border-radius: 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            overflow: hidden;
+        }
+        video { width: 100%; height: 100%; object-fit: cover; }
+
+        /* 加载动画 */
+        .loader {
+            width: 48px; height: 48px;
+            border: 3px solid #FFF;
+            border-radius: 50%;
+            display: inline-block;
+            position: relative;
+            box-sizing: border-box;
+            animation: rotation 1s linear infinite;
+        } 
+        .loader::after {
+            content: '';  
+            box-sizing: border-box;
+            position: absolute;
+            left: 50%; top: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-bottom-color: var(--secondary-accent);
+        }
+        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* 状态提示 */
+        .status-toast {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 20px;
+            font-size: 12px; opacity: 0; transition: 0.3s;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="status-toast" id="status-msg">系统准备就绪</div>
+
+    <div class="app-container">
+        
+        <!-- PAGE 1: 首页 -->
+        <div id="page-1" class="page active">
+            <h1 style="font-size: 2.5rem;">AI INTERACTIVE ART</h1>
+            <p style="color: var(--text-dim); margin-bottom: 40px;">智能会话 • 创意绘图 • 视频生成</p>
+            <!-- 对应文档 步骤1: 选择模式 -->
+            <button class="btn" onclick="apiStartProject()">请选择 (Start Project)</button>
+        </div>
+
+        <!-- PAGE 2: 上传或绘画 -->
+        <div id="page-2" class="page">
+            <h2>创意输入</h2>
+            <div id="input-choice" style="display: flex; gap: 20px;">
+                <button class="btn" onclick="showDrawBoard()">请自己画画</button>
+                <button class="btn btn-outline" onclick="document.getElementById('file-upload').click()">请输入图片</button>
+                <input type="file" id="file-upload" hidden accept="image/*" onchange="handleFileSelect(this)">
+            </div>
+
+            <!-- 画板界面 -->
+            <div id="draw-area" style="display:none; flex-direction: column; align-items: center;">
+                <div class="canvas-wrapper">
+                    <canvas id="art-canvas" width="600" height="400"></canvas>
+                </div>
+                <div class="toolbar">
+                    <div id="colors" style="display: flex; gap: 8px; padding-right: 15px; border-right: 1px solid rgba(255,255,255,0.2);"></div>
+                    <button class="btn btn-outline" style="padding: 5px 15px; font-size: 12px;" onclick="useEraser()">橡皮</button>
+                    <button class="btn btn-outline" style="padding: 5px 15px; font-size: 12px;" onclick="clearCanvas()">清空</button>
+                    <button class="btn" style="padding: 5px 20px; font-size: 14px; margin-left: 10px;" onclick="submitDrawing()">确认生成</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE 3: 聊天 (对应后端 Game Service / Chat) -->
+        <div id="page-3" class="page">
+            <h2>AI 对话中</h2>
+            <div class="chat-container" id="chat-box">
+                <!-- 消息会动态插入这里 -->
+                <div class="msg msg-ai">图片已接收！分析完成。让我们开始聊聊这个场景吧。</div>
+            </div>
+            <div class="chat-input-box">
+                <input type="text" id="chat-input" placeholder="输入您的想法..." onkeydown="if(event.key==='Enter') sendChat()">
+                <button class="btn" onclick="sendChat()" style="margin:0;">发送</button>
+            </div>
+            <button class="btn btn-outline" style="margin-top: 20px;" onclick="goToVideoPage()">结束聊天并生成视频</button>
+        </div>
+
+        <!-- PAGE 4: 视频结果 -->
+        <div id="page-4" class="page">
+            <h2>视频总结</h2>
+            <div class="video-box">
+                <video id="final-video" controls style="display:none;"></video>
+                <div id="video-loader" style="text-align: center;">
+                    <span class="loader"></span>
+                    <p style="margin-top: 15px; color: var(--text-dim);">AI 正在合成视频...</p>
+                </div>
+            </div>
+            <button class="btn" id="save-btn" onclick="downloadVideo()" disabled>请保存视频</button>
+            <button class="btn btn-outline" onclick="location.reload()">重新开始</button>
+        </div>
+
+    </div>
+
+    <script>
+        // === 1. 后端接口配置 (完全按照你提供的图片/文字信息配置) ===
+        const API_BASE = "http://localhost:8000"; 
+        
+        const API = {
+            START: `${API_BASE}/api/v1/projects/start`,       // 步骤1
+            UPLOAD: `${API_BASE}/api/v1/upload/analyze`,     // 步骤2
+            // 步骤4 聊天交互: 使用 game-step 作为主要对话接口
+            CHAT: `${API_BASE}/api/v1/interact/game-step`,   
+            GEN_VIDEO: `${API_BASE}/api/v1/video/generate`   // 步骤5
+        };
+
+        // 全局状态
+        let currentRound = 1;   // 当前是第几回合（1~10)
+        let currentProjectId = null;
+        let isDrawing = false;
+        let ctx = null;
+
+        // === 2. 页面导航逻辑 ===
+        function switchPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            setTimeout(() => {
+                document.getElementById(pageId).classList.add('active');
+            }, 50);
+        }
+
+        function showStatus(text) {
+            const el = document.getElementById('status-msg');
+            el.innerText = text;
+            el.style.opacity = 1;
+            setTimeout(() => el.style.opacity = 0, 3000);
+        }
+
+        // === 3. 业务逻辑实现 ===
+
+        // --- 步骤1: 启动项目 ---
+        async function apiStartProject() {
+            try {
+                showStatus("正在连接后端...");
+                // 默认使用 'game' 模式，因为涉及到交互和评分
+                const res = await fetch(API.START, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: "game" }) 
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    // 假设后端返回 { project_id: "xxx", ... }
+                    // 如果后端返回的 key 不一样，请在这里修改，比如 data.id
+                    currentProjectId = data.session_id || data.id || "mock_session_123";
+                    console.log("Project ID:", currentProjectId);
+                    switchPage('page-2');
+                } else {
+                    alert("启动失败，请检查后端服务是否开启 (uvicorn app.main:app)");
+                    // 演示用 fallback
+                    switchPage('page-2');
+                }
+            } catch (e) {
+                console.error(e);
+                alert("无法连接到 http://localhost:8000。请确认后端已运行。");
+            }
+        }
+
+        // --- 步骤2: 图片处理 (上传文件) ---
+        async function handleFileSelect(input) {
+            if (input.files && input.files[0]) {
+                await uploadImage(input.files[0]);
+            }
+        }
+
+        // --- 步骤2: 图片处理 (画板提交) ---
+        function submitDrawing() {
+            const canvas = document.getElementById('art-canvas');
+            canvas.toBlob((blob) => {
+                const file = new File([blob], "drawing.png", { type: "image/png" });
+                uploadImage(file);
+            });
+        }
+
+        // 工具函数：把 File 对象转成 base64 字符串（只取逗号后的部分）
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+
+        // 读完文件会触发 onload
+                reader.onload = () => {
+                    const result = reader.result || "";
+            // 形如 data:image/png;base64,xxxxxxxx
+                    const commaIndex = result.indexOf(",");
+                    const base64 = commaIndex >= 0 ? result.slice(commaIndex + 1) : result;
+                    resolve(base64);
+        };
+
+                reader.onerror = (err) => {
+                    console.error("File 转 base64 失败:", err);
+                    reject(err);
+        };
+
+        // 以 dataURL 的形式读取文件
+                reader.readAsDataURL(file);
+            });
+        }   
+
+
+        // --- 步骤2: 图片处理 (统一走 JSON + base64 流程) ---
+        async function uploadImage(file) {
+            try {
+                showStatus("正在分析图片...");
+
+        // 1. 把文件转成 base64 字符串
+                const base64 = await fileToBase64(file);
+                console.log("base64 长度:", base64.length);
+
+        // 2. 按后端的 AnalyzeImageRequest 组装 JSON
+                const body = {
+                    session_id: currentProjectId || "mock_session_123",  // 和步骤1拿到的一致
+                    image_file: base64,      // 把图片塞在这里
+                    image_url: null,         // 我们现在不用 URL，就写 null
+                    mode: "game"             // 先固定为 game 模式
+        };
+
+                console.log("准备发送的 JSON:", body);
+
+        // 3. 发送 POST 请求（Content-Type: application/json）
+                const res = await fetch(API.UPLOAD, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+            },
+                    body: JSON.stringify(body)
+        });
+
+                if (!res.ok) {
+                    const text = await res.text();
+                    console.error("图片上传失败:", res.status, text);
+                    alert("图片上传失败，状态码：" + res.status);
+                    return;
+        }
+
+        // 4. 拿到后端的解析结果（目前是 mock）
+                const data = await res.json();
+                console.log("图片分析结果:", data);
+
+        // TODO: 你可以在这里把 data.image_caption / data.characters
+        // 塞到页面里，现在先保持原来的跳转流程：
+                switchPage("page-3");
+            } catch (e) {
+                console.error("网络错误:", e);
+                alert("图片上传失败：网络错误");
+            }
+        }
+
+
+        // --- 步骤4: 聊天交互 ---
+        // AI 聊天发送逻辑：调用 /api/v1/interact/game-step
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+    // 1. UI 显示用户消息
+            appendMsg(text, 'user');
+            input.value = '';
+
+            try {
+        // 2. 调用 /api/v1/interact/game-step
+                const res = await fetch(API.CHAT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: currentProjectId || "mock_session_123", // 和前面 start 拿到的一致
+                        round_index: currentRound,                          // 第几回合
+                        player_action: text                                 // 用户的操作描述
+                    })
+                });
+
+                if (!res.ok) {
+                    const errText = await res.text();
+                    console.error("game-step 失败:", res.status, errText);
+                    appendMsg(`（后端出错了：${res.status}）`, 'ai');
+                    return;
+                }
+
+                const data = await res.json();
+                console.log("game-step 返回:", data);
+
+        // 3. UI 显示 AI 回复
+        // 后端的字段叫 system_reaction_text，我们优先用这个
+                const aiText =
+                    data.system_reaction_text ||
+                    data.response ||
+                    data.message ||
+                    data.text ||
+                    "AI 似乎在思考...";
+
+                appendMsg(aiText, 'ai');
+
+        // 4. 回合数自增（如果后端有返回 current_round，就以它为准）
+                if (typeof data.current_round === "number") {
+                    currentRound = data.current_round + 1;
+                } else {
+                    currentRound += 1;
+                }
+
+            } catch (e) {
+                console.error("game-step 网络错误:", e);
+                appendMsg("这是前端模拟回复：后端连接出错或未返回数据。", 'ai');
+            }
+        }
+
+
+        function appendMsg(text, type) {
+            const box = document.getElementById('chat-box');
+            const div = document.createElement('div');
+            div.className = `msg msg-${type}`;
+            div.innerText = text;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        // --- 步骤5: 生成视频 ---
+        async function goToVideoPage() {
+            switchPage('page-4');
+            generateVideo();
+        }
+
+        async function generateVideo() {
+            try {
+                // 调用 /api/v1/video/generate
+                const res = await fetch(API.GEN_VIDEO, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project_id: currentProjectId })
+                });
+                
+                const data = await res.json();
+                
+                // 假设后端返回 { video_url: "http://..." }
+                // 或者直接返回视频流。如果是 URL：
+                const videoUrl = data.video_url || "https://www.w3schools.com/html/mov_bbb.mp4"; // 后面那个是测试用的
+                
+                // 隐藏 loading，显示视频
+                document.getElementById('video-loader').style.display = 'none';
+                const video = document.getElementById('final-video');
+                video.src = videoUrl;
+                video.style.display = 'block';
+                video.play();
+                
+                // 启用下载按钮
+                document.getElementById('save-btn').disabled = false;
+
+            } catch (e) {
+                console.error(e);
+                document.getElementById('video-loader').innerHTML = "<p>视频生成请求失败</p>";
+            }
+        }
+
+        function downloadVideo() {
+            const video = document.getElementById('final-video');
+            const a = document.createElement('a');
+            a.href = video.src;
+            a.download = `AI_Story_${new Date().getTime()}.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+
+        // === 4. 画板功能初始化 ===
+        function showDrawBoard() {
+            document.getElementById('input-choice').style.display = 'none';
+            document.getElementById('draw-area').style.display = 'flex';
+            initCanvas();
+        }
+
+        function initCanvas() {
+            const canvas = document.getElementById('art-canvas');
+            ctx = canvas.getContext('2d');
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 4;
+            
+            // 绑定事件
+            canvas.addEventListener('mousedown', startDraw);
+            canvas.addEventListener('mousemove', drawing);
+            canvas.addEventListener('mouseup', stopDraw);
+            canvas.addEventListener('mouseout', stopDraw);
+            
+            // 生成16色
+            const colors = [
+                '#000000', '#ffffff', '#ff3b30', '#ff9500', 
+                '#ffcc00', '#4cd964', '#5ac8fa', '#007aff',
+                '#5856d6', '#ff2d55', '#8e8e93', '#c7c7cc',
+                '#5c4033', '#800080', '#008080', '#000080'
+            ];
+            const colorContainer = document.getElementById('colors');
+            colors.forEach(c => {
+                const d = document.createElement('div');
+                d.className = 'color-dot';
+                d.style.backgroundColor = c;
+                d.onclick = () => {
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.strokeStyle = c;
+                    ctx.lineWidth = 4;
+                    document.querySelectorAll('.color-dot').forEach(x => x.classList.remove('active'));
+                    d.classList.add('active');
+                };
+                colorContainer.appendChild(d);
+            });
+        }
+
+        function startDraw(e) { isDrawing = true; ctx.beginPath(); ctx.moveTo(e.offsetX, e.offsetY); }
+        function drawing(e) { if(!isDrawing) return; ctx.lineTo(e.offsetX, e.offsetY); ctx.stroke(); }
+        function stopDraw() { isDrawing = false; ctx.closePath(); }
+        function useEraser() { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = 20; }
+        function clearCanvas() { ctx.clearRect(0,0,600,400); }
+
+    </script>
+</body>
+</html>
