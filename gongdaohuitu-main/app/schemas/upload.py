@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional,Literal
 
 class AnalyzeImageRequest(BaseModel):
     """
@@ -11,7 +11,7 @@ class AnalyzeImageRequest(BaseModel):
     session_id: str
     image_file: Optional[str] = None  # Base64 encoded image or URL
     image_url: Optional[str] = None  # Alternative: direct URL to image
-    mode: str  # "video" or "game"
+    mode: Literal["game", "video"]
 
 class AnalyzeImageResponseVideo(BaseModel):
     """
