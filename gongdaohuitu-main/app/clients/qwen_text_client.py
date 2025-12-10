@@ -1,10 +1,14 @@
 import requests
 import json
+import os
 
 # =======================================================
 # ⚠️ 关键参数：请替换为你的阿里云 DashScope API Key ⚠️
 # =======================================================
-DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxx" 
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+
+if not DASHSCOPE_API_KEY:
+    raise RuntimeError("DASHSCOPE_API_KEY 未配置，请在 .env 中设置")
 
 class QwenTextClient:
     """Client for Qwen2 text generation service, connected to DashScope API"""

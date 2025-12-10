@@ -1,8 +1,12 @@
 import requests
 import json
+import os
 
 # 请替换为阿里云 API Key
-DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxx"
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+
+if not DASHSCOPE_API_KEY:
+    raise RuntimeError("DASHSCOPE_API_KEY 未配置，请在 .env 中设置")
 
 class QwenVLClient:
     def analyze_image(self, image_url_or_base64: str) -> str:

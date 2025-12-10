@@ -1,9 +1,13 @@
 import requests
 import json
+import os
 
 # 请替换为火山引擎 API Key 和 Model Endpoint ID
-VOLC_API_KEY = "your_volc_api_key"
-DOUBAO_ENDPOINT_ID = "ep-xxxxxxxxxxx" # 豆包模型的接入点 ID
+VOLC_API_KEY = os.getenv("VOLC_API_KEY")
+DOUBAO_ENDPOINT_ID = os.getenv("DOUBAO_ENDPOINT_ID")
+
+if not VOLC_API_KEY or not DOUBAO_ENDPOINT_ID:
+    raise RuntimeError("豆包 VOLC_API_KEY 或 DOUBAO_ENDPOINT_ID 未配置，请在 .env 中设置")
 
 class DoubaoClient:
     def _call_doubao(self, system_prompt: str, user_content: str) -> str:

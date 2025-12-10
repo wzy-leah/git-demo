@@ -1,3 +1,9 @@
+from dotenv import load_dotenv
+import os
+
+# ✅ 主动加载上级目录的 .env 文件
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware  # <--- 1. 新增导入
 from app.api.v1.router import router as v1_router

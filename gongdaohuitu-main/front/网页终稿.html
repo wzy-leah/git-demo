@@ -209,8 +209,28 @@
             margin-bottom: 20px;
             border: 1px solid rgba(255,255,255,0.1);
             overflow: hidden;
+            position: relative; /* 确保状态信息可以在视频上方显示 */
         }
         video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* 轮询状态显示 */
+        #polling-status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 12px;
+            text-align: center;
+            font-size: 16px;
+            width: 80%;
+            max-width: 300px;
+            z-index: 20;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
 
         /* 加载动画 */
         .loader {
@@ -223,7 +243,7 @@
             animation: rotation 1s linear infinite;
         } 
         .loader::after {
-            content: '';  
+            content: ''; 
             box-sizing: border-box;
             position: absolute;
             left: 50%; top: 50%;
@@ -298,11 +318,12 @@
         <div id="page-4" class="page">
             <h2>视频总结</h2>
             <div class="video-box">
-                <video id="final-video" controls style="display:none;"></video>
-                <div id="video-loader" style="text-align: center;">
+                <!-- 轮询状态 UI 元素 -->
+                <div id="polling-status">
                     <span class="loader"></span>
-                    <p style="margin-top: 15px; color: var(--text-dim);">AI 正在合成视频...</p>
+                    <p style="margin-top: 15px; color: var(--text-dim);">任务等待中...</p>
                 </div>
+                <video id="final-video" controls style="display:none;"></video>
             </div>
             <button class="btn" id="save-btn" onclick="downloadVideo()" disabled>请保存视频</button>
             <button class="btn btn-outline" onclick="location.reload()">重新开始</button>
@@ -315,18 +336,21 @@
         const API_BASE = "http://localhost:8000"; 
         
         const API = {
-            START: `${API_BASE}/api/v1/projects/start`,       // 步骤1
-            UPLOAD: `${API_BASE}/api/v1/upload/analyze`,     // 步骤2
-            // 步骤4 聊天交互: 使用 game-step 作为主要对话接口
-            CHAT: `${API_BASE}/api/v1/interact/game-step`,   
-            GEN_VIDEO: `${API_BASE}/api/v1/video/generate`   // 步骤5
+            START: `${API_BASE}/api/v1/projects/start`,       // 步骤1
+            UPLOAD: `${API_BASE}/api/v1/upload/analyze`,     // 步骤2
+            CHAT: `${API_BASE}/api/v1/interact/game-step`,   // 步骤4 聊天交互
+            GEN_VIDEO: `${API_BASE}/api/v1/video/generate`, // 步骤5 (提交任务)
+            // 🚨 轮询专用的新 API 地址 🚨
+            QUERY_VIDEO: `${API_BASE}/api/v1/video/query-result` // 步骤5 (查询任务状态)
         };
 
         // 全局状态
-        let currentRound = 1;   // 当前是第几回合（1~10)
+        let currentRound = 1;   // 当前是第几回合（1~10)
         let currentProjectId = null;
         let isDrawing = false;
         let ctx = null;
+        let storySteps = [];
+        let queryInterval = null; // 轮询定时器句柄
 
         // === 2. 页面导航逻辑 ===
         function switchPage(pageId) {
@@ -343,6 +367,92 @@
             setTimeout(() => el.style.opacity = 0, 3000);
         }
 
+        // ====================================================
+        // 轮询的核心函数 (新增或修改)
+        // ====================================================
+        /**
+         * 启动轮询机制，查询任务状态。
+         * @param {string} taskId 后端返回的视频生成任务ID。
+         */
+        function startVideoPolling(taskId) {
+            if (queryInterval) {
+                clearInterval(queryInterval);
+                queryInterval = null;
+            }
+
+            const statusElement = document.getElementById('polling-status');
+            const videoElement = document.getElementById('final-video');
+            videoElement.style.display = 'none'; // 确保视频元素隐藏
+
+            // 显示并更新状态信息
+            statusElement.style.display = 'block'; 
+            statusElement.innerHTML = `<span class="loader"></span><p style="margin-top: 15px;">任务已提交 (ID: ${taskId})，正在后台生成中...</p>`;
+
+            let checkCount = 0;
+
+            // 启动定时器，每 5 秒执行一次查询
+            queryInterval = setInterval(async () => {
+                checkCount++;
+                try {
+                    // 1. 发送查询请求到后端的新接口
+                    const res = await fetch(API.QUERY_VIDEO, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ task_id: taskId })
+                    });
+                    
+                    if (!res.ok) {
+                        throw new Error('Query API failed with status ' + res.status);
+                    }
+                    
+                    const data = await res.json();
+                    const status = data.status;
+                    const videoUrl = data.video_url; 
+
+                    // 2. 根据状态判断和更新 UI
+                    if (status === "COMPLETED") {
+                        clearInterval(queryInterval); // 任务完成，停止轮询
+                        showStatus(`✅ 视频生成成功！(总查询次数: ${checkCount})`);
+                        statusElement.style.display = 'none'; // 隐藏状态框
+                        displayFinalVideo(videoUrl); 
+                        console.log("最终视频 URL:", videoUrl);
+                        
+                    } else if (status === "FAILED" || status === "ERROR") {
+                        clearInterval(queryInterval);
+                        statusElement.innerHTML = `❌ 视频生成失败 (第 ${checkCount} 次查询)。请检查后端日志。`;
+                        showStatus(`❌ 视频生成失败。`);
+                        
+                    } else { 
+                        // PENDING, PROCESSING, RUNNING 等状态
+                        statusElement.innerHTML = `<span class="loader"></span><p style="margin-top: 15px;">任务正在处理中... (状态: ${status})</p><p style="font-size:12px;">第 ${checkCount} 次查询</p>`;
+                    }
+                    
+                } catch (e) {
+                    console.error("视频轮询过程中发生错误:", e);
+                    clearInterval(queryInterval);
+                    statusElement.innerHTML = `🔴 轮询中止，发生错误：${e.message}`;
+                    showStatus(`🔴 轮询中止，发生错误。`);
+                }
+            }, 5000); // 间隔 5 秒 (5000 毫秒)
+
+            console.log(`Polling started for Task ID: ${taskId}`);
+        }
+
+        /**
+         * 在 Page 4 显示最终视频结果。
+         * @param {string} videoUrl 最终的视频文件 URL。
+         */
+        function displayFinalVideo(videoUrl) {
+            const video = document.getElementById('final-video');
+            const saveBtn = document.getElementById('save-btn');
+
+            video.src = videoUrl;
+            video.style.display = 'block'; // 显示视频元素
+            saveBtn.disabled = false; // 启用下载按钮
+        }
+        // ====================================================
+
+
         // === 3. 业务逻辑实现 ===
 
         // --- 步骤1: 启动项目 ---
@@ -358,13 +468,13 @@
                 
                 if (res.ok) {
                     const data = await res.json();
-                    // 假设后端返回 { project_id: "xxx", ... }
-                    // 如果后端返回的 key 不一样，请在这里修改，比如 data.id
+                    // 假设后端返回 { session_id: "xxx", ... }
                     currentProjectId = data.session_id || data.id || "mock_session_123";
                     console.log("Project ID:", currentProjectId);
                     switchPage('page-2');
                 } else {
-                    alert("启动失败，请检查后端服务是否开启 (uvicorn app.main:app)");
+                    const errorText = await res.text();
+                    alert("启动失败，请检查后端服务是否开启 (uvicorn app.main:app)。错误: " + errorText.substring(0, 50));
                     // 演示用 fallback
                     switchPage('page-2');
                 }
@@ -395,24 +505,24 @@
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
 
-        // 读完文件会触发 onload
+                // 读完文件会触发 onload
                 reader.onload = () => {
                     const result = reader.result || "";
-            // 形如 data:image/png;base64,xxxxxxxx
+                    // 形如 data:image/png;base64,xxxxxxxx
                     const commaIndex = result.indexOf(",");
                     const base64 = commaIndex >= 0 ? result.slice(commaIndex + 1) : result;
                     resolve(base64);
-        };
+                };
 
                 reader.onerror = (err) => {
                     console.error("File 转 base64 失败:", err);
                     reject(err);
-        };
+                };
 
-        // 以 dataURL 的形式读取文件
+                // 以 dataURL 的形式读取文件
                 reader.readAsDataURL(file);
             });
-        }   
+        }   
 
 
         // --- 步骤2: 图片处理 (统一走 JSON + base64 流程) ---
@@ -420,46 +530,69 @@
             try {
                 showStatus("正在分析图片...");
 
-        // 1. 把文件转成 base64 字符串
+                // 1. 把文件转成 base64 字符串
                 const base64 = await fileToBase64(file);
                 console.log("base64 长度:", base64.length);
 
-        // 2. 按后端的 AnalyzeImageRequest 组装 JSON
+                // 2. 按后端的 AnalyzeImageRequest 组装 JSON
                 const body = {
-                    session_id: currentProjectId || "mock_session_123",  // 和步骤1拿到的一致
-                    image_file: base64,      // 把图片塞在这里
-                    image_url: null,         // 我们现在不用 URL，就写 null
-                    mode: "game"             // 先固定为 game 模式
-        };
+                    session_id: currentProjectId || "mock_session_123",  // 和步骤1拿到的一致
+                    image_file: base64,      // 把图片塞在这里
+                    image_url: null,         // 我们现在不用 URL，就写 null
+                    mode: "game"             // 先固定为 game 模式
+                };
 
                 console.log("准备发送的 JSON:", body);
 
-        // 3. 发送 POST 请求（Content-Type: application/json）
+                // 3. 发送 POST 请求（Content-Type: application/json）
                 const res = await fetch(API.UPLOAD, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json"
-            },
+                    },
                     body: JSON.stringify(body)
-        });
+                });
 
                 if (!res.ok) {
                     const text = await res.text();
                     console.error("图片上传失败:", res.status, text);
                     alert("图片上传失败，状态码：" + res.status);
                     return;
-        }
+                }
 
-        // 4. 拿到后端的解析结果（目前是 mock）
+                // 4. 拿到后端的解析结果
                 const data = await res.json();
                 console.log("图片分析结果:", data);
 
-        // TODO: 你可以在这里把 data.image_caption / data.characters
-        // 塞到页面里，现在先保持原来的跳转流程：
+                // ❗ 关键修正 1：存储第一个步骤
+                const initialImageUrl = data.image_url; // 假设后端返回了上传后的URL
+                const initialPrompt = data.image_caption || "一个简单的铅笔素描"; // 假设后端返回了图片描述
+
+                if (initialImageUrl && initialPrompt) {
+                    // 清空数组，只保留第一个初始步骤
+                    storySteps = []; 
+                    storySteps.push({
+                        image_url: initialImageUrl,
+                        prompt: initialPrompt
+                    });
+                    console.log("已设置初始故事步骤:", storySteps[0]);
+                } else {
+                    // 如果后端不提供，使用模拟数据确保流程通过
+                    storySteps = [{
+                        image_url: "https://placehold.co/600x400/000000/FFFFFF?text=Initial+Image", 
+                        prompt: "默认初始图片描述"
+                    }];
+                    console.warn("WARN: 后端图片分析缺少 image_url/caption，使用 Mock 数据填充初始步骤。");
+                }
+                
+                // ----------------------------------------------------
+
+                // TODO: 你可以在这里把 data.image_caption / data.characters
+                // 塞到页面里，现在先保持原来的跳转流程：
                 switchPage("page-3");
             } catch (e) {
-                console.error("网络错误:", e);
-                alert("图片上传失败：网络错误");
+                console.error("图片上传/分析网络错误:", e);
+                alert("图片上传或分析出现网络错误。");
             }
         }
 
@@ -471,19 +604,19 @@
             const text = input.value.trim();
             if (!text) return;
 
-    // 1. UI 显示用户消息
+            // 1. UI 显示用户消息
             appendMsg(text, 'user');
             input.value = '';
 
             try {
-        // 2. 调用 /api/v1/interact/game-step
+                // 2. 调用 /api/v1/interact/game-step
                 const res = await fetch(API.CHAT, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        session_id: currentProjectId || "mock_session_123", // 和前面 start 拿到的一致
-                        round_index: currentRound,                          // 第几回合
-                        player_action: text                                 // 用户的操作描述
+                        session_id: currentProjectId || "mock_session_123",
+                        round_index: currentRound,
+                        player_action: text
                     })
                 });
 
@@ -497,8 +630,7 @@
                 const data = await res.json();
                 console.log("game-step 返回:", data);
 
-        // 3. UI 显示 AI 回复
-        // 后端的字段叫 system_reaction_text，我们优先用这个
+                // 3. UI 显示 AI 回复
                 const aiText =
                     data.system_reaction_text ||
                     data.response ||
@@ -508,7 +640,27 @@
 
                 appendMsg(aiText, 'ai');
 
-        // 4. 回合数自增（如果后端有返回 current_round，就以它为准）
+                // --- 3.5 关键修改：存储故事步骤 ---
+                // 假设后端在每次 game-step 成功时，返回了用于生成当前步骤画面的 image_url 和 prompt
+                if (data.image_url && data.prompt) {
+                    storySteps.push({
+                        image_url: data.image_url, 
+                        prompt: data.prompt 
+                    });
+                    console.log(`Round ${currentRound}: 新的故事步骤已保存。当前总步骤数: ${storySteps.length}`);
+                } else {
+                    // 如果后端没有返回新图和新描述，我们把这次对话内容作为一个新的 prompt，但使用上一个图片的 URL
+                    const lastImageUrl = storySteps.length > 0 ? storySteps[storySteps.length - 1].image_url : "https://placehold.co/600x400/000000/FFFFFF?text=Fallback+Image";
+
+                     storySteps.push({
+                        image_url: lastImageUrl, 
+                        prompt: `继续上次的故事: ${aiText}。玩家的指令是: ${text}`
+                    });
+                    console.warn(`WARN: Round ${currentRound}: 后端未返回 image_url 或 prompt。使用上一个图片 URL + AI 回复作为新的步骤描述。`);
+                }
+                // ------------------------------------
+
+                // 4. 回合数自增
                 if (typeof data.current_round === "number") {
                     currentRound = data.current_round + 1;
                 } else {
@@ -531,42 +683,83 @@
             box.scrollTop = box.scrollHeight;
         }
 
-        // --- 步骤5: 生成视频 ---
+        // --- 步骤5: 跳转并触发视频生成 ---
         async function goToVideoPage() {
             switchPage('page-4');
-            generateVideo();
+            // 确保在跳转到 Page 4 后立即开始视频生成流程
+            generateVideo(); 
         }
 
+
+        /**
+         * 提交视频生成任务，并启动轮询。
+         * 这是原 generateVideo 函数的重写，现在它只负责：
+         * 1. 提交任务。
+         * 2. 拿到 task_id。
+         * 3. 调用 startVideoPolling(task_id)。
+         */
         async function generateVideo() {
+            // 确保清空之前的定时器
+            if (queryInterval) {
+                clearInterval(queryInterval);
+                queryInterval = null;
+            }
+            
+            const statusElement = document.getElementById('polling-status');
+            const videoElement = document.getElementById('final-video');
+            const saveBtn = document.getElementById('save-btn');
+            
+            videoElement.style.display = 'none';
+            saveBtn.disabled = true;
+
             try {
-                // 调用 /api/v1/video/generate
+                statusElement.style.display = 'block';
+                statusElement.innerHTML = `<span class="loader"></span><p style="margin-top: 15px;">正在发送视频生成请求...</p>`;
+
+                // 1. 构建符合后端 GenerateVideoRequest 模式的请求体
+                const requestBody = {
+                    session_id: currentProjectId || "mock_session_123",
+                    mode: "game", 
+                    story_steps: storySteps, 
+                    duration: 10,
+                    rhythm: "medium" 
+                };
+
+                // 2. 调用 /api/v1/video/generate
                 const res = await fetch(API.GEN_VIDEO, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ project_id: currentProjectId })
+                    body: JSON.stringify(requestBody)
                 });
-                
+
+                if (!res.ok) {
+                    const errText = await res.text();
+                    console.error("视频生成请求失败:", res.status, errText);
+                    statusElement.innerHTML = `<p style="color:red;">视频生成请求失败: ${res.status}</p>`;
+                    return;
+                }
+
                 const data = await res.json();
+                console.log("视频生成任务结果:", data);
                 
-                // 假设后端返回 { video_url: "http://..." }
-                // 或者直接返回视频流。如果是 URL：
-                const videoUrl = data.video_url || "https://www.w3schools.com/html/mov_bbb.mp4"; // 后面那个是测试用的
+                // 3. 拿到 task_id
+                const taskId = data.task_id; 
                 
-                // 隐藏 loading，显示视频
-                document.getElementById('video-loader').style.display = 'none';
-                const video = document.getElementById('final-video');
-                video.src = videoUrl;
-                video.style.display = 'block';
-                video.play();
-                
-                // 启用下载按钮
-                document.getElementById('save-btn').disabled = false;
+                if (taskId) {
+                    showStatus(`视频任务已提交: ${taskId}`);
+                    // 🚨 关键：启动轮询
+                    startVideoPolling(taskId); 
+                } else {
+                    statusElement.innerHTML = `<p style="color:red;">提交任务成功，但后端未返回 task_id。</p>`;
+                    showStatus(`❌ 任务提交失败。`);
+                }
 
             } catch (e) {
-                console.error(e);
-                document.getElementById('video-loader').innerHTML = "<p>视频生成请求失败</p>";
+                console.error("视频生成网络错误:", e);
+                statusElement.innerHTML = `<p style="color:red;">视频生成请求失败（网络错误）</p>`;
             }
         }
+
 
         function downloadVideo() {
             const video = document.getElementById('final-video');
@@ -588,6 +781,9 @@
 
         function initCanvas() {
             const canvas = document.getElementById('art-canvas');
+            // 确保只初始化一次
+            if(ctx) return; 
+
             ctx = canvas.getContext('2d');
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
@@ -620,12 +816,19 @@
                 };
                 colorContainer.appendChild(d);
             });
+             // 默认选择第一个颜色
+             document.querySelector('.color-dot').click();
         }
 
         function startDraw(e) { isDrawing = true; ctx.beginPath(); ctx.moveTo(e.offsetX, e.offsetY); }
         function drawing(e) { if(!isDrawing) return; ctx.lineTo(e.offsetX, e.offsetY); ctx.stroke(); }
         function stopDraw() { isDrawing = false; ctx.closePath(); }
-        function useEraser() { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = 20; }
+        function useEraser() { 
+            ctx.globalCompositeOperation = 'destination-out'; 
+            ctx.lineWidth = 20; 
+            document.querySelectorAll('.color-dot').forEach(x => x.classList.remove('active'));
+            showStatus("已切换到橡皮擦");
+        }
         function clearCanvas() { ctx.clearRect(0,0,600,400); }
 
     </script>
